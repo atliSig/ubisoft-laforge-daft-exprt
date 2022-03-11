@@ -5,7 +5,7 @@ import os
 _logger = logging.getLogger(__name__)
 
 
-def create_sets(features_dir, hparams, proportion_validation=0.1):
+def create_sets(features_dir, hparams, proportion_validation=0.1, max_chars=200):
     ''' Create train and validation sets, for all specified speakers
 
     :param features_dir:                directory containing all the speakers features files
@@ -35,9 +35,12 @@ def create_sets(features_dir, hparams, proportion_validation=0.1):
         # get available features files for training
         # some metadata files might miss because there was no .markers associated to the file
         file_names = [line[0].strip() for line in lines]
-        features_files = [x for x in file_names if os.path.isfile(os.path.join(spk_features_dir, f'{x}.npy'))]
+        num_chars = [len(line[1]) for line in lines]
+        features_files = [x for i, x in enumerate(file_names)
+            if os.path.isfile(os.path.join(spk_features_dir, f'{x}.npy'))
+            and num_chars[i] <= max_chars]
         nb_feats_files = len(features_files)
-        
+
         ctr = 0
         validation_ctr = 0
         for feature_file in features_files:
@@ -48,7 +51,7 @@ def create_sets(features_dir, hparams, proportion_validation=0.1):
                 file_validation.write(new_line)
                 validation_ctr += 1
             else:
-                file_training.write(new_line)   
+                file_training.write(new_line)
         _logger.info('')
 
     file_training.close()

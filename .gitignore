@@ -9,3 +9,11 @@ build/
 datasets/
 trainings/
 tmp/
+
+
+##### SLURM ######
+slurm_*
+
+### REAPER ####
+src/daft_exprt/bin/reaper/linux/reaper
+test_reaper.py

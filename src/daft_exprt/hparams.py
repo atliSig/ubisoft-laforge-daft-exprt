@@ -34,7 +34,7 @@ class HyperParams(object):
         ###########################################
         # misc hyper-parameters
         self.minimum_wav_duration = 1000  # minimum duration (ms) of the audio files used for training
-        
+
         # mel-spec extraction hyper-parameters
         self.centered = True  # extraction window is centered on the time step when doing FFT
         self.min_clipping = 1e-5  # min clipping value when creating mel-specs
@@ -44,7 +44,7 @@ class HyperParams(object):
         self.n_mel_channels = 80  # number of mel bands to generate
         self.filter_length = 1024  # FFT window length (in samples)
         self.hop_length = 256  # length (in samples) between successive analysis windows for FFT
-        
+
         # REAPER pitch extraction hyper-parameters
         self.f0_interval = 0.005
         self.min_f0 = 40
@@ -53,9 +53,9 @@ class HyperParams(object):
         self.uv_cost = 0.9
         self.order = 1
         self.cutoff = 25
-        
+
         # training hyper-parameters
-        self.seed = 1234  # seed used to initialize weights
+        self.seed = 6666  # seed used to initialize weights
         self.cudnn_enabled = True  # parameter used when initializing training
         self.cudnn_benchmark = False  # parameter used when initializing training
         self.cudnn_deterministic = True  # parameter used when initializing training
@@ -66,7 +66,7 @@ class HyperParams(object):
         self.batch_size = 16  # batch size per GPU card
         self.accumulation_steps = 3  # number of iterations before updating model parameters (gradient accumulation)
         self.checkpoint = ''  # checkpoint to use to restart training at a specific place
-        
+
         # loss weigths hyper-parameters
         self.lambda_reversal = 1.  # lambda multiplier used in reversal gradient layer
         self.adv_max_weight = 1e-2  # max weight to apply on speaker adversarial loss
@@ -75,7 +75,7 @@ class HyperParams(object):
         self.energy_weight = 1.  # weight to apply on energy loss
         self.pitch_weight = 1.  # weight to apply on pitch loss
         self.mel_spec_weight = 1.  # weight to apply on mel-spec loss
-        
+
         # optimizer hyper-parameters
         self.optimizer = 'adam'  # optimizer to use for training
         self.betas = (0.9, 0.98)  # betas coefficients in Adam
@@ -85,7 +85,7 @@ class HyperParams(object):
         self.max_learning_rate = 1e-3  # max value of learning rate during training
         self.warmup_steps = 10000  # linearly increase the learning rate for the first warmup steps
         self.grad_clip_thresh = float('inf')  # gradient clipping threshold to stabilize training
-        
+
         # Daft-Exprt module hyper-parameters
         self.prosody_encoder = {
             'nb_blocks': 4,
@@ -96,7 +96,7 @@ class HyperParams(object):
             'conv_channels': 1024,
             'conv_dropout': 0.1
         }
-        
+
         self.phoneme_encoder = {
             'nb_blocks': 4,
             'hidden_embed_dim': 128,
@@ -106,18 +106,18 @@ class HyperParams(object):
             'conv_channels': 1024,
             'conv_dropout': 0.1
         }
-        
+
         self.local_prosody_predictor = {
             'nb_blocks': 1,
             'conv_kernel': 3,
             'conv_channels': 256,
             'conv_dropout': 0.1,
         }
-        
+
         self.gaussian_upsampling_module = {
             'conv_kernel': 3
         }
-        
+
         self.frame_decoder = {
             'nb_blocks': 4,
             'attn_nb_heads': 2,
@@ -126,7 +126,7 @@ class HyperParams(object):
             'conv_channels': 1024,
             'conv_dropout': 0.1
         }
-        
+
         ######################################################################
         #### hyper-parameter values that have to be specified in **kwargs ####
         ######################################################################
@@ -136,13 +136,13 @@ class HyperParams(object):
 
         self.language = None  # spoken language of the speaker(s)
         self.speakers = None  # speakers we want to use for training or transfer learning
-        
+
         ##########################################################################################
         #### hyper-parameter inferred from other hyper-params values or specified in **kwargs ####
         ##########################################################################################
         self.stats = {}  # features stats used during training and inference
         self.symbols = []  # list of symbols used in the specified language
-        
+
         self.n_speakers = 0  # number of speakers to use with a lookup table
         self.speakers_id = []  # ID associated to each speaker -- starts from 0
 
@@ -190,7 +190,7 @@ class HyperParams(object):
         # check padding symbol is at index 0
         # zero padding is used in the DataLoader and Daft-Exprt model
         assert(self.symbols.index(pad) == 0), _logger.error(f'Padding symbol "{pad}" must be at index 0')
-        
+
         # set speakers ID if not already set
         if len(self.speakers_id) == 0:
             self.speakers_id = [i for i in range(len(self.speakers))]
@@ -201,7 +201,7 @@ class HyperParams(object):
             self.n_speakers = len(set(self.speakers_id)) + 1
             if verbose:
                 _logger.info(f'Nb speakers: {len(set(self.speakers_id))} -- Changed "n_speakers" to {self.n_speakers}\n')
-        
+
         # check number of speakers is coherent
         assert (self.n_speakers >= len(set(self.speakers_id))), \
             _logger.error(f'Parameter "n_speakers" must be superior or equal to the number of speakers -- '
@@ -215,7 +215,7 @@ class HyperParams(object):
 
         # check FFT/Mel-Spec extraction parameters are correct
         assert(self.filter_length % self.hop_length == 0), _logger.error(f'filter_length must be a multiple of hop_length')
-    
+
     def update_mfa_paths(self):
         ''' Update MFA paths to match the ones in the current environment
         '''
@@ -228,17 +228,17 @@ class HyperParams(object):
         assert(os.path.isfile(self.mfa_dictionary)), _logger.error(f'There is no such file "{self.mfa_dictionary}"')
         assert(os.path.isfile(self.mfa_g2p_model)), _logger.error(f'There is no such file "{self.mfa_g2p_model}"')
         assert(os.path.isfile(self.mfa_acoustic_model)), _logger.error(f'There is no such file "{self.mfa_acoustic_model}"')
-    
+
     def save_hyper_params(self, json_file):
         ''' Save hyper-parameters to JSON file
-        
+
         :param json_file:       path of the JSON file to store hyper-parameters
         '''
         # create directory if it does not exists
         dirname = os.path.dirname(json_file)
         os.makedirs(dirname, exist_ok=True)
         # extract hyper-parameters used
-        hyper_params = self.__dict__.copy() 
+        hyper_params = self.__dict__.copy()
         # save hyper-parameters to JSON file
         with open(json_file, 'w') as f:
             json.dump(hyper_params, f, indent=4, sort_keys=True)

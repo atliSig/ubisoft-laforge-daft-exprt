@@ -16,7 +16,7 @@ from daft_exprt.utils import launch_multi_process
 _logger = logging.getLogger(__name__)
 
 
-''' 
+'''
     Align speaker corpuses using MFA
     https://montreal-forced-aligner.readthedocs.io/en/latest/
 '''
@@ -37,7 +37,7 @@ def prepare_corpus(corpus_dir, language):
     metadata = os.path.join(corpus_dir, 'metadata.csv')
     assert(os.path.isdir(wavs_dir)), _logger.error(f'There is no such directory: {wavs_dir}')
     assert(os.path.isfile(metadata)), _logger.error(f'There is no such file: {metadata}')
-    
+
     # extract lines from metadata.csv
     with open(metadata, 'r', encoding='utf-8') as f:
         lines = f.readlines()
@@ -48,7 +48,7 @@ def prepare_corpus(corpus_dir, language):
     # extract file names and corresponding text
     file_names = [line[0].strip() for line in lines]
     texts = [line[1].strip() for line in lines]
-    
+
     # create .lab file for each audio file
     wavs = [os.path.join(wavs_dir, x) for x in os.listdir(wavs_dir) if x.endswith('.wav')]
     for wav in wavs:
@@ -79,7 +79,7 @@ def _extract_markers(text_grid_file, log_queue):
         root.setLevel(logging.INFO)
         root.addHandler(qh)
     logger = logging.getLogger(f"worker{str(uuid.uuid4())}")
-    
+
     # load text grid
     text_grid = tgt.io.read_textgrid(text_grid_file, include_empty_intervals=True)
     # extract word and phone tiers
@@ -108,7 +108,7 @@ def _extract_markers(text_grid_file, log_queue):
             phones[-1][1] = end
         else:
             phones.append(marker)
-    
+
     # gather words and phones markers together
     # ignore if an unknown word/phone is detected
     # ignore if a silence is detected withing the word
@@ -136,7 +136,7 @@ def _extract_markers(text_grid_file, log_queue):
                     # check phone does not overlap with word
                     assert(end_phone <= begin_word or end_word <= begin_phone), \
                         logger.error(f'{text_grid_file} -- word and phoneme overlap -- word number {word_idx}')
-        
+
         if not silence_error:
             # trim leading and tailing silences
             phone_lead, phone_tail = markers[0][2], markers[-1][2]
@@ -155,7 +155,7 @@ def _extract_markers(text_grid_file, log_queue):
                 assert(float(end_curr) == float(begin_next)), logger.error(f'{text_grid_file} -- problem with sentence timing')
                 assert(float(begin_curr) < float(end_curr)), logger.error(f'{text_grid_file} -- problem with sentence timing')
                 assert(float(begin_next) < float(end_next)), logger.error(f'{text_grid_file} -- problem with sentence timing')
-            
+
             # save file in .markers format
             text_grid_dir = os.path.dirname(text_grid_file)
             file_name = os.path.basename(text_grid_file).replace('.TextGrid', '')
@@ -171,7 +171,7 @@ def extract_markers(text_grid_dir, n_jobs):
     grid_files_to_process = [x for x in all_grid_files if not os.path.isfile(x.replace('.TextGrid', '.markers'))]
     _logger.info(f'Folder: {text_grid_dir} -- {len(all_grid_files) - len(grid_files_to_process)} TextGrid files already processed -- '
                  f'{len(grid_files_to_process)} TextGrid files need to be processed')
-    
+
     # extract markers for words and phones
     launch_multi_process(iterable=grid_files_to_process, func=_extract_markers, n_jobs=n_jobs, timer_verbose=False)
 
@@ -182,7 +182,7 @@ def mfa(dataset_dir, hparams, n_jobs):
     _logger.info('--' * 30)
     _logger.info('Running MFA for each speaker data set'.upper())
     _logger.info('--' * 30)
-    
+
     # perform alignment for each speaker
     for speaker in hparams.speakers:
         _logger.info(f'Speaker: "{speaker}"')
@@ -196,31 +196,32 @@ def mfa(dataset_dir, hparams, n_jobs):
             g2p_model = hparams.mfa_g2p_model
             acoustic_model = hparams.mfa_acoustic_model
             temp_dir = os.path.join(corpus_dir, 'tmp')
-            
+
             # create .lab files for each audio file
             _logger.info('Preparing MFA corpus')
             prepare_corpus(corpus_dir, language)
-            
-            # # uncomment if you need to validate your corpus before MFA alignment
-            # # validate corpuses to ensure there are no issues with the data format
-            # _logger.info('Validating corpus')
-            # tmp_dir = os.path.join(temp_dir, 'validate')
-            # os.system(f'mfa validate {corpus_dir} {dictionary} '
-            #           f'{acoustic_model} -t {tmp_dir} -j {n_jobs}')
-            # # use a G2P model to generate a pronunciation dictionary for unknown words
-            # # this can later be added manually to the dictionary
-            # oovs = os.path.join(tmp_dir, os.path.basename(speaker), 'corpus_data', 'oovs_found.txt')
-            # if os.path.isfile(oovs):
-            #     _logger.info('Generating transcriptions for unknown words')
-            #     oovs_trans = os.path.join(corpus_dir, 'oovs_transcriptions.txt')
-            #     os.system(f'mfa g2p {g2p_model} {oovs} {oovs_trans}')
-            
+
+            # uncomment if you need to validate your corpus before MFA alignment
+            # validate corpuses to ensure there are no issues with the data format
+            #_logger.info('Validating corpus')
+            #tmp_dir = os.path.join(temp_dir, 'validate')
+            #os.system(f'mfa validate {corpus_dir} {dictionary} '
+            #          f'{acoustic_model} -t {tmp_dir} -j {n_jobs}')
+
+            # use a G2P model to generate a pronunciation dictionary for unknown words
+            # this can later be added manually to the dictionary
+            #oovs = os.path.join(tmp_dir, os.path.basename(speaker), 'corpus_data', 'oovs_found.txt')
+            #if os.path.isfile(oovs):
+            #    _logger.info('Generating transcriptions for unknown words')
+            #    oovs_trans = os.path.join(corpus_dir, 'oovs_transcriptions.txt')
+            #    os.system(f'mfa g2p {g2p_model} {oovs} {oovs_trans}')
+
             # perform forced alignment with a pretrained acoustic model
             _logger.info('Performing forced alignment using a pretrained model')
             tmp_dir = os.path.join(temp_dir, 'align')
             os.system(f'mfa align {corpus_dir} {dictionary} {acoustic_model} '
                         f'{align_out_dir} -t {tmp_dir} -j {n_jobs} -v -c')
-            
+
             # extract word/phone alignment markers from .TextGrid files
             _logger.info('Extracting markers')
             text_grid_dir = os.path.join(align_out_dir, 'wavs')

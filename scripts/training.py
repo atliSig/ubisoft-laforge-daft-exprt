@@ -50,7 +50,7 @@ def pre_process(pre_process_args):
         print(f'Cannot perform pre-processing')
         print(f'Please change the "experiment_name" script argument\n')
         sys.exit(1)
-    
+
     # set logger config
     log_dir = os.path.join(output_directory, 'logs')
     os.makedirs(log_dir, exist_ok=True)
@@ -64,7 +64,6 @@ def pre_process(pre_process_args):
         datefmt="%Y-%m-%d %H:%M:%S",
         level=logging.INFO
     )
-    
     # create default location for features dir if not specified by the user
     features_dir = os.path.join(pre_process_args.features_dir, pre_process_args.language, f'{hparams.sampling_rate}Hz') \
         if pre_process_args.features_dir == os.path.join(PROJECT_ROOT, "datasets") else pre_process_args.features_dir
@@ -73,12 +72,11 @@ def pre_process(pre_process_args):
         same_config = check_features_config_used(features_dir, hparams)
         assert(same_config), _logger.error(f'"{features_dir}" contains data that were extracted using a different set '
                                            f'of hyper-parameters. Please change the "features_dir" script argument')
-    
     # set number of parallel jobs
     nb_jobs = get_nb_jobs(pre_process_args.nb_jobs)
     # perform alignment using MFA
     mfa(data_set_dir, hparams, nb_jobs)
-    
+
     # copy metadata.csv
     for speaker in hparams.speakers:
         spk_features_dir = os.path.join(features_dir, speaker)
@@ -87,7 +85,6 @@ def pre_process(pre_process_args):
         metadata_dst = os.path.join(features_dir, speaker, 'metadata.csv')
         assert(os.path.isfile(metadata_src)), _logger.error(f'There is no such file: {metadata_src}')
         copyfile(metadata_src, metadata_dst)
-    
     # extract features
     extract_features(data_set_dir, features_dir, hparams, nb_jobs)
     # create train and valid sets
@@ -124,7 +121,8 @@ def fine_tune(fine_tune_args):
     process = ['python', f'{fine_tune_script}',
                '--data_set_dir', f'{data_set_dir}',
                '--config_file', f'{config_file}',
-               '--log_file', f"{os.path.join(output_directory, 'logs', 'fine_tuning.log')}"]
+               '--log_file', f"{os.path.join(output_directory, 'logs', 'fine_tuning.log')}",
+               '--ft_dir', f'{fine_tune_args.ft_directory}']
     call(process)
 
 
@@ -141,7 +139,7 @@ if __name__ == '__main__':
                              'If [], finds all speakers contained in data_set_dir')
     parser.add_argument('-lg', '--language', type=str, default='english',
                         help='spoken language of the speakers that are stored in data_set_dir')
-    
+
     parser_pre_process = subparsers.add_parser('pre_process', help='pre-process speakers data sets for training')
     parser_pre_process.set_defaults(func=pre_process)
     parser_pre_process.add_argument('-fd', '--features_dir', type=str, default=f'{os.path.join(PROJECT_ROOT, "datasets")}',
@@ -150,7 +148,7 @@ if __name__ == '__main__':
                                     help='for each speaker, proportion of examples (%) that will be in the validation set')
     parser_pre_process.add_argument('-nj', '--nb_jobs', type=str, default='6',
                                     help='number of cores to use for python multi-processing')
-    
+
     parser_train = subparsers.add_parser('train', help='train Daft-Exprt on the pre-processed data sets')
     parser_train.set_defaults(func=train)
     parser_train.add_argument('-chk', '--checkpoint', type=str, default='',
@@ -164,14 +162,15 @@ if __name__ == '__main__':
                               help='node rank for distributed training')
     parser_train.add_argument('-m', '--master', type=str, default='tcp://localhost:54321',
                               help='url used to set up distributed training')
-    
+
     parser_fine_tune = subparsers.add_parser('fine_tune', help='generate data sets with the Daft-Exprt trained model for vocoder fine-tuning')
     parser_fine_tune.set_defaults(func=fine_tune)
     parser_fine_tune.add_argument('-chk', '--checkpoint', type=str,
                                   help='checkpoint path to use for creating the data set for fine-tuning')
-
+    parser_fine_tune.add_argument('-ftdir', '--ft_directory', type=str, default='',
+                                  help='Path to directory where the fine tuning dataset will be stored.')
     args = parser.parse_args()
-    
+
     # create path variables
     data_set_dir = args.data_set_dir
     output_directory = os.path.join(PROJECT_ROOT, 'trainings', args.experiment_name)
@@ -180,10 +179,10 @@ if __name__ == '__main__':
     config_file = os.path.join(output_directory, 'config.json')
     stats_file = os.path.join(output_directory, 'stats.json')
     benchmark_dir = os.path.join(PROJECT_ROOT, 'scripts', 'benchmarks')
-    
+
     # find all speakers in data_set_dir if not specified in the args
     args.speakers = list_all_speakers(data_set_dir) if len(args.speakers) == 0 else args.speakers
-    
+
     # fill hparams dictionary with mandatory keyword arguments
     hparams_kwargs = {
         'training_files': training_files,
@@ -194,10 +193,10 @@ if __name__ == '__main__':
     }
     # fill hparams dictionary to overwrite default hyper-param values
     hparams_kwargs['checkpoint'] = args.checkpoint if hasattr(args, 'checkpoint') else ''
-    
+
     # create hyper-params object and save config parameters
     hparams = HyperParams(**hparams_kwargs)
     hparams.save_hyper_params(config_file)
-    
+
     # run args
     args.func(args)

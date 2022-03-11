@@ -22,14 +22,14 @@ def get_symbols_durations(markers_file, hparams, log_queue):
         root.setLevel(logging.INFO)
         root.addHandler(qh)
     logger = logging.getLogger(f"worker{str(uuid.uuid4())}")
-    
+
     # check file exists
     assert(os.path.isfile(markers_file)), logger.error(f'There is no such file "{markers_file}"')
     # read markers lines
     with open(markers_file, 'r', encoding='utf-8') as f:
         lines = f.readlines()
     markers = [line.strip().split(sep='\t') for line in lines]  # [[begin, end, nb_frames, symbol, word, word_idx], ...]
-    
+
     # extract duration for each symbol that is in markers
     symbols_durations = []
     for marker in markers:
@@ -37,7 +37,7 @@ def get_symbols_durations(markers_file, hparams, log_queue):
         assert(symbol in hparams.symbols), logger.error(f'{markers_file} -- Symbol "{symbol}" does not exist')
         begin, end = float(begin), float(end)
         symbols_durations.append([symbol, end - begin])
-    
+
     return symbols_durations
 
 
@@ -60,7 +60,7 @@ def get_non_zero_energy_values(energy_file, log_queue):
     energy_vals = [float(line.strip()) for line in lines]
     # remove non-zero energy values
     energy_vals = list(filter(lambda a: a != 0., energy_vals))
-    
+
     return energy_vals
 
 
@@ -83,7 +83,7 @@ def get_voiced_pitch_values(pitch_file, log_queue):
     pitch_vals = [float(line.strip()) for line in lines]
     # remove unvoiced pitch values
     pitch_vals = list(filter(lambda a: a != 0., pitch_vals))
-    
+
     return pitch_vals
 
 
@@ -94,7 +94,7 @@ def extract_features_stats(hparams, n_jobs):
     with open(hparams.training_files, 'r', encoding='utf-8') as f:
         lines = f.readlines()
     training_files = [line.strip().split(sep='|') for line in lines]  # [[features_dir, features_file, speaker_id], ...]
-    
+
     # iterate over speakers
     _logger.info('--' * 30)
     _logger.info('Extracting Features Stats'.upper())
@@ -106,21 +106,21 @@ def extract_features_stats(hparams, n_jobs):
         _logger.info(f'Speaker ID: {speaker_id}')
         # extract all files associated to speaker ID
         spk_training_files = [[x[0], x[1]] for x in training_files if int(x[2]) == speaker_id]
-        
+
         # extract symbol durations
         markers_files = [os.path.join(x[0], f'{x[1]}.markers') for x in spk_training_files]
         symbols_durs = launch_multi_process(iterable=markers_files, func=get_symbols_durations,
                                             n_jobs=n_jobs, hparams=hparams, timer_verbose=False)
         symbols_durs = [y for x in symbols_durs for y in x]
         symbols_durations.extend(symbols_durs)
-        
+
         # extract non-zero energy values
         energy_files = [os.path.join(x[0], f'{x[1]}.symbols_nrg') for x in spk_training_files]
         energy_vals = launch_multi_process(iterable=energy_files, func=get_non_zero_energy_values,
                                            n_jobs=n_jobs, timer_verbose=False)
         energy_vals = [y for x in energy_vals for y in x]
         speaker_stats[f'spk {speaker_id}']['energy'].extend(energy_vals)
-        
+
         # extract voiced symbols pitch values
         pitch_files = [os.path.join(x[0], f'{x[1]}.symbols_f0') for x in spk_training_files]
         pitch_vals = launch_multi_process(iterable=pitch_files, func=get_voiced_pitch_values,
@@ -128,7 +128,7 @@ def extract_features_stats(hparams, n_jobs):
         pitch_vals = [y for x in pitch_vals for y in x]
         speaker_stats[f'spk {speaker_id}']['pitch'].extend(pitch_vals)
         _logger.info('')
-    
+
     # compute symbols durations stats
     symbols_stats = collections.defaultdict(list)
     for item in symbols_durations:
@@ -161,5 +161,4 @@ def extract_features_stats(hparams, n_jobs):
     # merge stats
     stats = {**speaker_stats}
     stats['symbols'] = symbols_stats
-    
     return stats

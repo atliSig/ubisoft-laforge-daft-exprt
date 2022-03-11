@@ -34,7 +34,7 @@ def phonemize_sentence(sentence, hparams, log_queue):
     # load dictionary and extract word transcriptions
     word_trans = collections.defaultdict(list)
     with open(dictionary, 'r', encoding='utf-8') as f:
-        lines = [line.strip().split() for line in f.readlines()] 
+        lines = [line.strip().split() for line in f.readlines()]
     for line in lines:
         word_trans[line[0].lower()].append(line[1:])
     # characters to consider in the sentence
@@ -42,7 +42,7 @@ def phonemize_sentence(sentence, hparams, log_queue):
         all_chars = ascii + punctuation
     else:
         raise NotImplementedError()
-    
+
     # clean sentence
     # "that's, an 'example! ' of a sentence. '"
     sentence = text_cleaner(sentence.strip(), hparams.language).lower().strip()
@@ -62,7 +62,7 @@ def phonemize_sentence(sentence, hparams, log_queue):
     while sent_words[-1] in punctuation:
         punctuation_end = sent_words.pop(-1)
     sent_words.append(punctuation_end)
-    
+
     # phonemize words and add word boundaries
     sentence_phonemized, unk_words = [], []
     while len(sent_words) != 0:
@@ -80,7 +80,7 @@ def phonemize_sentence(sentence, hparams, log_queue):
             sentence_phonemized.append(word_bound)
     # add EOS token
     sentence_phonemized.append(eos)
-    
+
     # use MFA g2p model to phonemize unknown words
     if len(unk_words) != 0:
         rand_name = str(uuid.uuid4())
@@ -124,7 +124,7 @@ def save_mel_spec_plot_and_audio(item, output_dir, hparams, log_queue):
         root.setLevel(logging.INFO)
         root.addHandler(qh)
     logger = logging.getLogger(f"worker{str(uuid.uuid4())}")
-    
+
     # extract items
     file_name, mel_spec, weight = item
     # create a figure from the output
@@ -183,7 +183,7 @@ def collate_tensors(batch_sentences, batch_dur_factors, batch_energy_factors,
             mel_spec_ref = torch.from_numpy(mel_spec_ref).float()  # (n_mel_channels, T_ref)
             # gather data
             batch.append([symbols, dur_factors, energy_factors, pitch_factors, energy_ref, pitch_ref, mel_spec_ref])
-    
+
     # find symbols sequence max length
     input_lengths, ids_sorted_decreasing = \
         torch.sort(torch.LongTensor([len(x[0]) for x in batch]), dim=0, descending=True)
@@ -208,7 +208,7 @@ def collate_tensors(batch_sentences, batch_dur_factors, batch_energy_factors,
         dur_factors[i, :dur_factors_seq.size(0)] = dur_factors_seq
         energy_factors[i, :energy_factors_seq.size(0)] = energy_factors_seq
         pitch_factors[i, :pitch_factors_seq.size(0)] = pitch_factors_seq
-    
+
     # find reference max length
     max_ref_len = max([x[6].size(1) for x in batch])
     # right zero-pad references to max output length
@@ -227,17 +227,17 @@ def collate_tensors(batch_sentences, batch_dur_factors, batch_energy_factors,
         pitch_refs[i, :pitch_ref_seq.size(0)] = pitch_ref_seq
         mel_spec_refs[i, :, :mel_spec_ref_seq.size(1)] = mel_spec_ref_seq
         ref_lengths[i] = mel_spec_ref_seq.size(1)
-    
+
     # reorganize speaker IDs and file names
     file_names = []
     speaker_ids = torch.LongTensor(len(batch))
     for i in range(len(ids_sorted_decreasing)):
         file_names.append(batch_file_names[ids_sorted_decreasing[i]])
         speaker_ids[i] = batch_speaker_ids[ids_sorted_decreasing[i]]
-    
+
     return symbols, dur_factors, energy_factors, pitch_factors, input_lengths, \
         energy_refs, pitch_refs, mel_spec_refs, ref_lengths, speaker_ids, file_names
-    
+
 
 def generate_batch_mel_specs(model, batch_sentences, batch_refs, batch_dur_factors,
                              batch_energy_factors, batch_pitch_factors, pitch_transform,
@@ -289,7 +289,7 @@ def generate_batch_mel_specs(model, batch_sentences, batch_refs, batch_dur_facto
     mel_spec_preds = mel_spec_preds.detach().cpu().numpy()  # (B, n_mel_channels, T_max)
     output_lengths = output_lengths.detach().cpu().numpy()  # (B)
     weights = weights.detach().cpu().numpy()  # (B, L_max, T_max)
-    
+
     # save preds for each element in the batch
     predictions = {}
     for line_idx in range(mel_spec_preds.shape[0]):
@@ -305,15 +305,15 @@ def generate_batch_mel_specs(model, batch_sentences, batch_refs, batch_dur_facto
         # save generated spectrogram
         file_name = file_names[line_idx]
         np.savez(os.path.join(output_dir, f'{file_name}.npz'), mel_spec=mel_spec_pred)
-        # store predictions 
+        # store predictions
         predictions[f'{file_name}'] = [duration_pred, duration_int, energy_pred, pitch_pred, mel_spec_pred, weight]
-    
+
     # save plots and generate audio using Griffin-Lim
     if use_griffin_lim:
         items = [[file_name, mel_spec, weight] for file_name, (_, _, _, _, mel_spec, weight) in predictions.items()]
         launch_multi_process(iterable=items, func=save_mel_spec_plot_and_audio, n_jobs=n_jobs,
                              timer_verbose=False, output_dir=output_dir, hparams=hparams)
-    
+
     return predictions
 
 
@@ -337,46 +337,46 @@ def generate_mel_specs(model, sentences, file_names, speaker_ids, refs, output_d
             ]
         for example, here is a sentence of 5 words, 6 word boundaries and a total of 17 symbols:
             sentence = [['IH0', 'Z'], ' ', ['IH0', 'T'], ',', ['AH0'], ' ', ['G', 'UH1', 'D'], ' ', ['CH', 'OY1', 'S'], '?', '~']
-        
+
         file_names = [
             file_name_1,
             ...
             file_name_N
         ]
-        
+
         speaker_ids = [
             speaker_id_1,
             ...
             speaker_id_N
         ]
-        
+
         refs = [
             path_to_ref_1.npz,
             ...
             path_to_ref_N.npz
         ]
-        
+
         dur_factors = [
             [factor_sentence_1_symbol_1, factor_sentence_1_symbol_2, ...],
             ...
             [factor_sentence_N_symbol_1, factor_sentence_N_symbol_2, ...]
         ]
         if None, duration predictions are not modified
-        
+
         energy_factors = [
             [factor_sentence_1_symbol_1, factor_sentence_1_symbol_2, ...],
             ...
             [factor_sentence_N_symbol_1, factor_sentence_N_symbol_2, ...]
         ]
         if None, energy predictions are not modified
-        
+
         pitch_factors = [
             "transform",
             [
                 [factor_sentence_1_symbol_1, factor_sentence_1_symbol_2, ...],
                 ...
                 [factor_sentence_N_symbol_1, factor_sentence_N_symbol_2, ...]
-            ] 
+            ]
         ]
         There are 2 types of transforms:
             - pitch shift: "add"
@@ -398,7 +398,7 @@ def generate_mel_specs(model, sentences, file_names, speaker_ids, refs, output_d
     assert (len(dur_factors) == len(sentences)), _logger.error(f'{len(dur_factors)} duration factors but there are {len(sentences)} sentences to generate')
     assert (len(energy_factors) == len(sentences)), _logger.error(f'{len(energy_factors)} energy factors but there are {len(sentences)} sentences to generate')
     assert (len(pitch_factors) == len(sentences)), _logger.error(f'{len(pitch_factors)} pitch factors but there are {len(sentences)} sentences to generate')
-      
+
     # we don't need computational graph for inference
     model.eval()  # set eval mode
     os.makedirs(output_dir, exist_ok=True)
@@ -406,7 +406,7 @@ def generate_mel_specs(model, sentences, file_names, speaker_ids, refs, output_d
     with torch.no_grad():
         for batch_sentences, batch_refs, batch_dur_factors, batch_energy_factors, \
             batch_pitch_factors, batch_speaker_ids, batch_file_names in \
-                zip(chunker(sentences, batch_size), chunker(refs, batch_size), 
+                zip(chunker(sentences, batch_size), chunker(refs, batch_size),
                     chunker(dur_factors, batch_size), chunker(energy_factors, batch_size),
                     chunker(pitch_factors, batch_size), chunker(speaker_ids, batch_size),
                     chunker(file_names, batch_size)):
@@ -417,7 +417,7 @@ def generate_mel_specs(model, sentences, file_names, speaker_ids, refs, output_d
                                                               n_jobs, use_griffin_lim)
                 predictions.update(batch_predictions)
                 time_per_batch += [time.time() - sentence_begin] if get_time_perf else []
-    
+
     # display overall time performance
     if get_time_perf:
         # get duration of each sentence
@@ -433,7 +433,7 @@ def generate_mel_specs(model, sentences, file_names, speaker_ids, refs, output_d
         _logger.info(f'')
         _logger.info(f'{len(predictions)} sentences ({sum(durations):.2f}s) generated in {sum(time_per_batch):.2f}s')
         _logger.info(f'DaftExprt RTF: {sum(durations)/sum(time_per_batch):.2f}')
-    
+
     return predictions
 
 
@@ -449,10 +449,10 @@ def extract_reference_parameters(audio_ref, output_dir, hparams):
         # read wav file to range [-1, 1] in np.float32
         wav, fs = librosa.load(audio_ref, sr=hparams.sampling_rate)
         wav = rescale_wav_to_float32(wav)
-        # get log pitch
-        pitch = extract_pitch(wav, fs, hparams)
         # extract mel-spectrogram
         mel_spec = mel_spectrogram_HiFi(wav, hparams)
+        # get log pitch
+        pitch = extract_pitch(wav, fs, mel_spec.shape[1], hparams)
         # get energy
         energy = extract_energy(np.exp(mel_spec))
         # check sizes are correct
@@ -469,7 +469,7 @@ def prepare_sentences_for_inference(text_file, output_dir, hparams, n_jobs):
     if os.path.exists(output_dir):
         rmtree(output_dir)
     os.makedirs(output_dir, exist_ok=False)
-    
+
     # extract sentences to synthesize
     assert(os.path.isfile(text_file)), _logger.error(f'There is no such file {text_file}')
     with open(os.path.join(text_file), 'r', encoding='utf-8') as f:
@@ -489,6 +489,6 @@ def prepare_sentences_for_inference(text_file, output_dir, hparams, n_jobs):
                     item = '{' + ' '.join(item) + '}'
                 text = f'{text} {item} '
             text = collapse_whitespace(text).strip()
-            f.write(f'{file_name}|{text}\n')    
+            f.write(f'{file_name}|{text}\n')
 
     return sentences, file_names
