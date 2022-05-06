@@ -68,7 +68,7 @@ class LinearNorm(nn.Module):
             x = (*, in_dim)
         '''
         x = self.linear_layer(x)  # (*, out_dim)
-        
+
         return x
 
 
@@ -82,7 +82,7 @@ class ConvNorm1D(nn.Module):
         self.conv = nn.Conv1d(in_channels, out_channels, kernel_size=kernel_size,
                               stride=stride, padding=padding, dilation=dilation, bias=bias)
         nn.init.xavier_uniform_(self.conv.weight, gain=nn.init.calculate_gain(w_init_gain))
-    
+
     def forward(self, x):
         ''' Forward function of Conv Norm 1D
             x = (B, L, in_channels)
@@ -90,7 +90,7 @@ class ConvNorm1D(nn.Module):
         x = x.transpose(1, 2)  # (B, in_channels, L)
         x = self.conv(x)  # (B, out_channels, L)
         x = x.transpose(1, 2)  # (B, L, out_channels)
-        
+
         return x
 
 
@@ -112,7 +112,7 @@ class ConvNorm2D(nn.Module):
         x = x.permute(0, 3, 1, 2)  # (B, in_channels, H, W)
         x = self.conv(x)  # (B, out_channels, H, W)
         x = x.permute(0, 2, 3, 1)  # (B, H, W, out_channels)
-        
+
         return x
 
 
@@ -122,13 +122,13 @@ class PositionalEncoding(nn.Module):
     '''
     def __init__(self, embed_dim, max_len=5000, timestep=10000.):
         super(PositionalEncoding, self).__init__()
-        self.embed_dim = embed_dim 
+        self.embed_dim = embed_dim
         pos = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)  # (max_len, 1)
         div_term = torch.exp(torch.arange(0, self.embed_dim, 2).float() * (-np.log(timestep) / self.embed_dim))  # (embed_dim // 2, )
         self.pos_enc = torch.FloatTensor(max_len, self.embed_dim).zero_()  # (max_len, embed_dim)
         self.pos_enc[:, 0::2] = torch.sin(pos * div_term)
         self.pos_enc[:, 1::2] = torch.cos(pos * div_term)
-    
+
     def forward(self, x):
         ''' Forward function of Positional Encoding:
             x = (B, N) -- Long or Int tensor
@@ -137,7 +137,7 @@ class PositionalEncoding(nn.Module):
         nb_frames_max = torch.max(torch.cumsum(x, dim=1))
         pos_emb = torch.FloatTensor(x.size(0), nb_frames_max, self.embed_dim).zero_()  # (B, nb_frames_max, embed_dim)
         pos_emb = pos_emb.cuda(x.device, non_blocking=True).float()  # (B, nb_frames_max, embed_dim)
-        
+
         # can be used for absolute or relative positioning
         for line_idx in range(x.size(0)):
             pos_idx = []
@@ -146,7 +146,7 @@ class PositionalEncoding(nn.Module):
                 pos_idx.extend([i for i in range(idx)])
             emb = self.pos_enc[pos_idx]  # (nb_frames, embed_dim)
             pos_emb[line_idx, :emb.size(0), :] = emb
-        
+
         return pos_emb
 
 
@@ -157,7 +157,7 @@ class MultiHeadAttention(nn.Module):
             "Attention is all you need",
             in NeurIPS, 2017.
         - Dropout
-        - Residual Connection 
+        - Residual Connection
         - Layer Normalization
     '''
     def __init__(self, hparams):
@@ -167,7 +167,7 @@ class MultiHeadAttention(nn.Module):
                                                           hparams.attn_dropout)
         self.dropout = nn.Dropout(hparams.attn_dropout)
         self.layer_norm = nn.LayerNorm(hparams.hidden_embed_dim)
-    
+
     def forward(self, query, key, value, key_padding_mask=None, attn_mask=None):
         ''' Forward function of Multi-Head Attention:
             query = (B, L_max, hidden_embed_dim)
@@ -197,7 +197,7 @@ class PositionWiseConvFF(nn.Module):
     ''' Position Wise Convolutional Feed-Forward Module:
         - 2x Conv 1D with ReLU
         - Dropout
-        - Residual Connection 
+        - Residual Connection
         - Layer Normalization
         - FiLM conditioning (if film_params is not None)
     '''
@@ -216,7 +216,7 @@ class PositionWiseConvFF(nn.Module):
             nn.Dropout(hparams.conv_dropout)
         )
         self.layer_norm = nn.LayerNorm(hparams.hidden_embed_dim)
-    
+
     def forward(self, x, film_params):
         ''' Forward function of PositionWiseConvFF:
             x = (B, L_max, hidden_embed_dim)
@@ -233,7 +233,7 @@ class PositionWiseConvFF(nn.Module):
             gammas = film_params[:, :nb_gammas].unsqueeze(1)  # (B, 1, hidden_embed_dim)
             betas = film_params[:, nb_gammas:].unsqueeze(1)  # (B, 1, hidden_embed_dim)
             outputs = gammas * outputs + betas  # (B, L_max, hidden_embed_dim)
-        
+
         return outputs
 
 
@@ -247,7 +247,7 @@ class FFTBlock(nn.Module):
         super(FFTBlock, self).__init__()
         self.attention = MultiHeadAttention(hparams)
         self.feed_forward = PositionWiseConvFF(hparams)
-    
+
     def forward(self, x, film_params, mask):
         ''' Forward function of FFT Block:
             x = (B, L_max, hidden_embed_dim)
@@ -260,7 +260,7 @@ class FFTBlock(nn.Module):
         # feed-forward pass
         outputs = self.feed_forward(attn_outputs, film_params)  # (B, L_max, hidden_embed_dim)
         outputs = outputs.masked_fill(mask.unsqueeze(2), 0)  # (B, L_max, hidden_embed_dim)
-        
+
         return outputs
 
 
@@ -272,7 +272,7 @@ class SpeakerClassifier(nn.Module):
         super(SpeakerClassifier, self).__init__()
         nb_speakers = hparams.n_speakers - 1
         embed_dim = hparams.prosody_encoder['hidden_embed_dim']
-        
+
         self.classifier = nn.Sequential(
             GradientReversal(hparams),
             LinearNorm(embed_dim, embed_dim, w_init_gain='relu'),
@@ -281,14 +281,14 @@ class SpeakerClassifier(nn.Module):
             nn.ReLU(),
             LinearNorm(embed_dim, nb_speakers, w_init_gain='linear')
         )
-    
+
     def forward(self, x):
         ''' Forward function of Speaker Classifier:
             x = (B, embed_dim)
         '''
         # pass through classifier
         outputs = self.classifier(x)  # (B, nb_speakers)
-        
+
         return outputs
 
 
@@ -304,7 +304,7 @@ class ProsodyEncoder(nn.Module):
         - 4x FFT Blocks
         - Speaker Embedding
         - Linear Projection Layer
-        
+
         This module predicts FiLM parameters to condition the Core Acoustic Model
         References:
         - E. Perez, F. Strub, H. de Vries, V. Dumoulin and A. Courville,
@@ -326,7 +326,7 @@ class ProsodyEncoder(nn.Module):
         }
         Tuple = namedtuple('Tuple', hparams.prosody_encoder)
         hparams = Tuple(**hparams.prosody_encoder)
-        
+
         # positional encoding
         self.pos_enc = PositionalEncoding(hparams.hidden_embed_dim)
         # energy embedding
@@ -387,7 +387,7 @@ class ProsodyEncoder(nn.Module):
             nn.init.xavier_uniform_(self.post_multipliers, gain=nn.init.calculate_gain('linear'))  # (2, nb_post_multipliers)
         else:
             self.post_multipliers = 1.
-    
+
     def forward(self, frames_energy, frames_pitch, mel_specs, speaker_ids, output_lengths):
         ''' Forward function of Prosody Encoder:
             frames_energy = (B, T_max)
@@ -422,7 +422,7 @@ class ProsodyEncoder(nn.Module):
         # encode speaker IDs and add
         speaker_ids = self.spk_embedding(speaker_ids)  # (B, hidden_embed_dim)
         outputs = outputs + speaker_ids  # (B, hidden_embed_dim)
-        
+
         # project outputs to predict all FiLM parameters
         gammas = self.gammas_predictor(outputs)  # (B, nb_tot_film_params)
         betas = self.betas_predictor(outputs)  # (B, nb_tot_film_params)
@@ -460,7 +460,7 @@ class ProsodyEncoder(nn.Module):
             block_idx += nb_blocks
             column_idx += module_nb_film_params
         encoder_film, prosody_pred_film, decoder_film = modules_film_params
-        
+
         return prosody_embeddings, encoder_film, prosody_pred_film, decoder_film
 
 
@@ -476,7 +476,7 @@ class PhonemeEncoder(nn.Module):
         embed_dim = hparams.phoneme_encoder['hidden_embed_dim']
         Tuple = namedtuple('Tuple', hparams.phoneme_encoder)
         hparams = Tuple(**hparams.phoneme_encoder)
-        
+
         # symbols embedding and positional encoding
         self.symbols_embedding = nn.Embedding(n_symbols, embed_dim)
         torch.nn.init.xavier_uniform_(self.symbols_embedding.weight.data)
@@ -486,7 +486,7 @@ class PhonemeEncoder(nn.Module):
         for _ in range(hparams.nb_blocks):
             blocks.append(FFTBlock(hparams))
         self.blocks = nn.ModuleList(blocks)
-    
+
     def forward(self, x, film_params, input_lengths):
         ''' Forward function of Phoneme Encoder:
             x = (B, L_max)
@@ -505,7 +505,7 @@ class PhonemeEncoder(nn.Module):
         # pass through FFT blocks
         for idx, block in enumerate(self.blocks):
             x = block(x, film_params[:, idx, :], mask)  # (B, L_max, hidden_embed_dim)
-        
+
         return x
 
 
@@ -520,7 +520,7 @@ class LocalProsodyPredictor(nn.Module):
         embed_dim = hparams.phoneme_encoder['hidden_embed_dim']
         Tuple = namedtuple('Tuple', hparams.local_prosody_predictor)
         hparams = Tuple(**hparams.local_prosody_predictor)
-        
+
         # conv1D blocks
         blocks = []
         for idx in range(hparams.nb_blocks):
@@ -545,7 +545,7 @@ class LocalProsodyPredictor(nn.Module):
         self.blocks = nn.ModuleList(blocks)
         # linear projection for prosody prediction
         self.projection = LinearNorm(hparams.conv_channels, 3, w_init_gain='linear')
-        
+
     def forward(self, x, film_params, input_lengths):
         ''' Forward function of Local Prosody Predictor:
             x = (B, L_max, hidden_embed_dim)
@@ -571,7 +571,7 @@ class LocalProsodyPredictor(nn.Module):
         durations = prosody_preds[:, :, 0]  # (B, L_max)
         energies = prosody_preds[:, :, 1]  # (B, L_max)
         pitch = prosody_preds[:, :, 2]  # (B, L_max)
-        
+
         return durations, energies, pitch
 
 
@@ -588,7 +588,7 @@ class GaussianUpsamplingModule(nn.Module):
         embed_dim = hparams.phoneme_encoder['hidden_embed_dim']
         Tuple = namedtuple('Tuple', hparams.gaussian_upsampling_module)
         hparams = Tuple(**hparams.gaussian_upsampling_module)
-        
+
         # duration, energy and pitch projection layers
         self.duration_projection = ConvNorm1D(1, embed_dim, kernel_size=hparams.conv_kernel,
                                               stride=1, padding=int((hparams.conv_kernel - 1) / 2),
@@ -604,7 +604,7 @@ class GaussianUpsamplingModule(nn.Module):
             LinearNorm(embed_dim, 1, w_init_gain='relu'),
             nn.Softplus()
         )
-    
+
     def forward(self, x, durations_float, durations_int, energies, pitch, input_lengths):
         ''' Forward function of Gaussian Upsampling Module:
             x = (B, L_max, hidden_embed_dim)
@@ -623,19 +623,19 @@ class GaussianUpsamplingModule(nn.Module):
         # project pitch
         pitch = pitch.unsqueeze(2)  # (B, L_max, 1)
         pitch = self.pitch_projection(pitch)  # (B, L_max, hidden_embed_dim)
-        
+
         # add energy and pitch to encoded input symbols
         x = x + energies + pitch  # (B, L_max, hidden_embed_dim)
-        
+
         # predict ranges for each symbol and mask tensor
         # use mask_value = 1. because ranges will be used as stds in Gaussian upsampling
         # mask_value = 0. would cause NaN values
-        range_inputs = x + durations  # (B, L_max, hidden_embed_dim) 
+        range_inputs = x + durations  # (B, L_max, hidden_embed_dim)
         ranges = self.projection(range_inputs)  # (B, L_max, 1)
         ranges = ranges.squeeze(2)  # (B, L_max)
         mask = ~get_mask_from_lengths(input_lengths) # (B, L_max)
         ranges = ranges.masked_fill(mask, 1)  # (B, L_max)
-        
+
         # perform Gaussian upsampling
         # compute Gaussian means
         means = durations_int.float() / 2  # (B, L_max)
@@ -658,7 +658,7 @@ class GaussianUpsamplingModule(nn.Module):
         # compute upsampled embedding
         x_upsamp = torch.sum(x.unsqueeze(-1) * weights.unsqueeze(2), dim=1)  # (B, input_dim, T_max)
         x_upsamp = x_upsamp.permute(0, 2, 1)  # (B, T_max, input_dim)
-        
+
         return x_upsamp, weights
 
 
@@ -675,7 +675,7 @@ class FrameDecoder(nn.Module):
         hparams.frame_decoder['hidden_embed_dim'] = embed_dim
         Tuple = namedtuple('Tuple', hparams.frame_decoder)
         hparams = Tuple(**hparams.frame_decoder)
-        
+
         # positional encoding
         self.pos_enc = PositionalEncoding(embed_dim)
         # FFT blocks
@@ -685,7 +685,7 @@ class FrameDecoder(nn.Module):
         self.blocks = nn.ModuleList(blocks)
         # linear projection for mel-spec prediction
         self.projection = LinearNorm(embed_dim, nb_mels, w_init_gain='linear')
-    
+
     def forward(self, x, film_params, output_lengths):
         ''' Forward function of Decoder Embedding:
             x = (B, T_max, hidden_embed_dim)
@@ -706,7 +706,7 @@ class FrameDecoder(nn.Module):
         mel_specs = self.projection(x)  # (B, T_max, nb_mels)
         mel_specs = mel_specs.masked_fill(mask.unsqueeze(2), 0)  # (B, T_max, nb_mels)
         mel_specs = mel_specs.transpose(1, 2)  # (B, nb_mels, T_max)
-        
+
         return mel_specs
 
 
@@ -723,14 +723,14 @@ class DaftExprt(nn.Module):
         self.prosody_predictor = LocalProsodyPredictor(hparams)
         self.gaussian_upsampling = GaussianUpsamplingModule(hparams)
         self.frame_decoder = FrameDecoder(hparams)
-    
+
     def parse_batch(self, gpu, batch):
         ''' Parse input batch
         '''
         # extract tensors
         symbols, durations_float, durations_int, symbols_energy, symbols_pitch, input_lengths, \
             frames_energy, frames_pitch, mel_specs, output_lengths, speaker_ids, feature_dirs, feature_files = batch
-        
+
         # transfer tensors to specified GPU
         symbols = symbols.cuda(gpu, non_blocking=True).long()                        # (B, L_max)
         durations_float = durations_float.cuda(gpu, non_blocking=True).float()       # (B, L_max)
@@ -743,49 +743,97 @@ class DaftExprt(nn.Module):
         mel_specs = mel_specs.cuda(gpu, non_blocking=True).float()                   # (B, n_mel_channels, T_max)
         output_lengths = output_lengths.cuda(gpu, non_blocking=True).long()          # (B, )
         speaker_ids = speaker_ids.cuda(gpu, non_blocking=True).long()                # (B, )
-        
+
         # create inputs and targets
         inputs = (symbols, durations_float, durations_int, symbols_energy, symbols_pitch, input_lengths,
                   frames_energy, frames_pitch, mel_specs, output_lengths, speaker_ids)
         targets = (durations_float, symbols_energy, symbols_pitch, mel_specs, speaker_ids)
         file_ids = (feature_dirs, feature_files)
-        
+
         return inputs, targets, file_ids
-    
+
     def forward(self, inputs):
         ''' Forward function of DaftExprt
         '''
+
         # extract inputs
-        symbols, durations_float, durations_int, symbols_energy, symbols_pitch, input_lengths, \
-            frames_energy, frames_pitch, mel_specs, output_lengths, speaker_ids = inputs
-        input_lengths, output_lengths = input_lengths.detach(), output_lengths.detach()
-        
-        # extract FiLM parameters from reference and speaker ID
-        # (B, nb_blocks, nb_film_params)
-        prosody_embed, encoder_film, prosody_pred_film, decoder_film = self.prosody_encoder(frames_energy, frames_pitch, mel_specs, speaker_ids, output_lengths)
-        # pass through speaker classifier
-        spk_preds = self.speaker_classifier(prosody_embed)  # (B, nb_speakers)
-        # embed phoneme symbols, add positional encoding and encode input sequence
-        enc_outputs = self.phoneme_encoder(symbols, encoder_film, input_lengths)  # (B, L_max, hidden_embed_dim)
-        # predict prosody parameters
-        duration_preds, energy_preds, pitch_preds = self.prosody_predictor(enc_outputs, prosody_pred_film, input_lengths)  # (B, L_max)
-        # perform Gaussian upsampling on symbols sequence
-        # use prosody ground-truth values for training
-        # symbols_upsamp = (B, T_max, hidden_embed_dim)
-        # weights = (B, L_max, T_max)
-        symbols_upsamp, weights = self.gaussian_upsampling(enc_outputs, durations_float, durations_int, symbols_energy, symbols_pitch, input_lengths)
-        # decode output sequence and predict mel-specs
-        mel_spec_preds = self.frame_decoder(symbols_upsamp, decoder_film, output_lengths)  # (B, nb_mels, T_max)
-        
-        # parse outputs
-        speaker_preds = spk_preds
-        film_params = [self.prosody_encoder.post_multipliers, encoder_film, prosody_pred_film, decoder_film]
-        encoder_preds = [duration_preds, energy_preds, pitch_preds, input_lengths]
-        decoder_preds = [mel_spec_preds, output_lengths]
-        alignments = weights
-        
+        if len(inputs) == 2:
+            # we are using PABC data
+            gt_symbols, gt_durations_float, gt_durations_int, gt_symbols_energy, gt_symbols_pitch, gt_input_lengths, \
+                gt_frames_energy, gt_frames_pitch, gt_mel_specs, gt_output_lengths, gt_speaker_ids = inputs[0]
+            gt_input_lengths, gt_output_lengths = gt_input_lengths.detach(), gt_output_lengths.detach()
+
+            ref_symbols, ref_durations_float, ref_durations_int, ref_symbols_energy, ref_symbols_pitch, ref_input_lengths, \
+                ref_frames_energy, ref_frames_pitch, ref_mel_specs, ref_output_lengths, ref_speaker_ids = inputs[1]
+            ref_input_lengths, ref_output_lengths = ref_input_lengths.detach(), ref_output_lengths.detach()
+
+            # extract FiLM parameters from reference and speaker ID
+            # (B, nb_blocks, nb_film_params)
+            # CHANGE: Everything is from the reference, except for the target speaker
+            # ID which is appended to outputs (not the prosody embedding)
+            # this also uses the reference output length (of mel spec). This is required
+            # since the reference frame energy and pitch are used internally
+            prosody_embed, encoder_film, prosody_pred_film, decoder_film = self.prosody_encoder(ref_frames_energy, ref_frames_pitch, ref_mel_specs, gt_speaker_ids, ref_output_lengths)
+
+            # pass through speaker classifier
+            # NO CHANGES
+            spk_preds = self.speaker_classifier(prosody_embed)  # (B, nb_speakers)
+
+            # embed phoneme symbols, add positional encoding and encode input sequence
+            # CHANGE: Uses the ground turth input length (num chars)
+            enc_outputs = self.phoneme_encoder(gt_symbols, encoder_film, gt_input_lengths)  # (B, L_max_gt, hidden_embed_dim)
+
+            # predict prosody parameters
+            # CHANGE: Uses the ground truth input length (num chars)
+            duration_preds, energy_preds, pitch_preds = self.prosody_predictor(enc_outputs, prosody_pred_film, gt_input_lengths)  # (B, L_max)
+
+            # perform Gaussian upsampling on symbols sequence
+            # use prosody ground-truth values for training
+            # symbols_upsamp = (B, T_max_gt, hidden_embed_dim)
+            # weights = (B, L_max_gt, T_max_gt)
+            # CHANGE:
+            symbols_upsamp, weights = self.gaussian_upsampling(enc_outputs, gt_durations_float, gt_durations_int, gt_symbols_energy, gt_symbols_pitch, gt_input_lengths)
+
+            # decode output sequence and predict mel-specs
+            mel_spec_preds = self.frame_decoder(symbols_upsamp, decoder_film, gt_output_lengths)  # (B, nb_mels, T_max)
+
+            # parse outputs
+            speaker_preds = spk_preds
+            film_params = [self.prosody_encoder.post_multipliers, encoder_film, prosody_pred_film, decoder_film]
+            encoder_preds = [duration_preds, energy_preds, pitch_preds, gt_input_lengths]
+            decoder_preds = [mel_spec_preds, gt_output_lengths]
+            alignments = weights
+        else:
+            symbols, durations_float, durations_int, symbols_energy, symbols_pitch, input_lengths, \
+                frames_energy, frames_pitch, mel_specs, output_lengths, speaker_ids = inputs
+            input_lengths, output_lengths = input_lengths.detach(), output_lengths.detach()
+
+            # extract FiLM parameters from reference and speaker ID
+            # (B, nb_blocks, nb_film_params)
+            prosody_embed, encoder_film, prosody_pred_film, decoder_film = self.prosody_encoder(frames_energy, frames_pitch, mel_specs, speaker_ids, output_lengths)
+            # pass through speaker classifier
+            spk_preds = self.speaker_classifier(prosody_embed)  # (B, nb_speakers)
+            # embed phoneme symbols, add positional encoding and encode input sequence
+            enc_outputs = self.phoneme_encoder(symbols, encoder_film, input_lengths)  # (B, L_max, hidden_embed_dim)
+            # predict prosody parameters
+            duration_preds, energy_preds, pitch_preds = self.prosody_predictor(enc_outputs, prosody_pred_film, input_lengths)  # (B, L_max)
+            # perform Gaussian upsampling on symbols sequence
+            # use prosody ground-truth values for training
+            # symbols_upsamp = (B, T_max, hidden_embed_dim)
+            # weights = (B, L_max, T_max)
+            symbols_upsamp, weights = self.gaussian_upsampling(enc_outputs, durations_float, durations_int, symbols_energy, symbols_pitch, input_lengths)
+            # decode output sequence and predict mel-specs
+            mel_spec_preds = self.frame_decoder(symbols_upsamp, decoder_film, output_lengths)  # (B, nb_mels, T_max)
+
+            # parse outputs
+            speaker_preds = spk_preds
+            film_params = [self.prosody_encoder.post_multipliers, encoder_film, prosody_pred_film, decoder_film]
+            encoder_preds = [duration_preds, energy_preds, pitch_preds, input_lengths]
+            decoder_preds = [mel_spec_preds, output_lengths]
+            alignments = weights
+
         return speaker_preds, film_params, encoder_preds, decoder_preds, alignments
-    
+
     def get_int_durations(self, duration_preds, hparams):
         ''' Convert float durations to integer frame durations
         '''
@@ -808,9 +856,9 @@ class DaftExprt(nn.Module):
             durations_int[line_idx, symbols_idx] = int_durs
         # put on GPU
         durations_int = durations_int.cuda(duration_preds.device, non_blocking=True).long()  # (B, L_max)
-        
+
         return duration_preds, durations_int
-    
+
     def pitch_shift(self, pitch_preds, pitch_factors, hparams, speaker_ids):
         ''' Pitch shift pitch predictions
             Pitch factors are assumed to be in Hz
@@ -830,9 +878,9 @@ class DaftExprt(nn.Module):
             pitch_preds[line_idx] = (torch.log(pitch_preds[line_idx]) - pitch_mean) / pitch_std  # (L_max)
         # set unvoiced idx to zero
         pitch_preds[zero_idxs[:, 0], zero_idxs[:, 1]] = 0.
-        
+
         return pitch_preds
-    
+
     def pitch_multiply(self, pitch_preds, pitch_factors):
         ''' Apply multiply transform to pitch prediction with respect to the mean
 
@@ -860,9 +908,9 @@ class DaftExprt(nn.Module):
             pitch_preds[line_idx] += pitch_deviation  # (L_max)
             # reset unvoiced values to 0
             pitch_preds[line_idx, zero_idxs] = 0.
-        
+
         return pitch_preds
-    
+
     def inference(self, inputs, pitch_transform, hparams):
         ''' Inference function of DaftExprt
         '''
@@ -878,7 +926,7 @@ class DaftExprt(nn.Module):
         # speaker_ids = (B, )
         symbols, dur_factors, energy_factors, pitch_factors, input_lengths, \
             energy_refs, pitch_refs, mel_spec_refs, ref_lengths, speaker_ids = inputs
-        
+
         # extract FiLM parameters from reference and speaker ID
         # (B, nb_blocks, nb_film_params)
         _, encoder_film, prosody_pred_film, decoder_film = self.prosody_encoder(energy_refs, pitch_refs, mel_spec_refs, speaker_ids, ref_lengths)
@@ -886,7 +934,7 @@ class DaftExprt(nn.Module):
         enc_outputs = self.phoneme_encoder(symbols, encoder_film, input_lengths)  # (B, L_max, hidden_embed_dim)
         # predict prosody parameters
         duration_preds, energy_preds, pitch_preds = self.prosody_predictor(enc_outputs, prosody_pred_film, input_lengths)  # (B, L_max)
-        
+
         # multiply durations by duration factors and extract int durations
         duration_preds *= dur_factors  # (B, L_max)
         duration_preds, durations_int = self.get_int_durations(duration_preds, hparams)  # (B, L_max)
@@ -903,7 +951,7 @@ class DaftExprt(nn.Module):
             pitch_preds = self.pitch_multiply(pitch_preds, pitch_factors)  # (B, L_max)
         else:
             raise NotImplementedError
-        
+
         # perform Gaussian upsampling on symbols sequence
         # symbols_upsamp = (B, T_max, hidden_embed_dim)
         # weights = (B, L_max, T_max)
@@ -914,10 +962,10 @@ class DaftExprt(nn.Module):
         assert(torch.max(output_lengths) == symbols_upsamp.size(1))
         # decode output sequence and predict mel-specs
         mel_spec_preds = self.frame_decoder(symbols_upsamp, decoder_film, output_lengths)  # (B, nb_mels, T_max)
-        
+
         # parse outputs
         encoder_preds = [duration_preds, durations_int, energy_preds, pitch_preds, input_lengths]
         decoder_preds = [mel_spec_preds, output_lengths]
         alignments = weights
-        
+
         return encoder_preds, decoder_preds, alignments

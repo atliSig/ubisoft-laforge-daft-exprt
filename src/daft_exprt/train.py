@@ -42,7 +42,7 @@ def check_train_config(hparams):
         lines = f.readlines()
     features_dirs = [line.strip().split(sep='|')[0] for line in lines]
     features_dirs = list(set(features_dirs))
-    
+
     # compare hyper-params
     _logger.info('--' * 30)
     _logger.info(f'Comparing training config with the one used to extract features'.upper())
@@ -111,13 +111,13 @@ def load_checkpoint(checkpoint_path, gpu, model, optimizer, hparams):
             elif getattr(hparams, param) != getattr(hparams_checkpoint, param):
                 _logger.warning(f'Parameter "{param}" has changed -- Was {getattr(hparams_checkpoint, param)} '
                                 f'in checkpoint and now is {getattr(hparams, param)}')
-        
+
     # assign checkpoint weights to the model
     try:
         model.load_state_dict(checkpoint_dict['state_dict'])
     except RuntimeError as e:
         _logger.error(f'Error when trying to load the checkpoint -- "{e}"\n')
-    
+
     # check if the optimizers are compatible
     k_new = optimizer.param_groups
     k_loaded = checkpoint_dict['optimizer']['param_groups']
@@ -126,7 +126,7 @@ def load_checkpoint(checkpoint_path, gpu, model, optimizer, hparams):
                         f'as the blank optimizer -- Creating a new optimizer.')
     else:
         optimizer.load_state_dict(checkpoint_dict['optimizer'])
-    
+
     # load additional values
     iteration = checkpoint_dict['iteration']
     learning_rate = checkpoint_dict['learning_rate']
@@ -147,13 +147,13 @@ def update_learning_rate(hparams, iteration):
         learning_rate = (max_learning_rate - initial_learning_rate) / warmup_steps * iteration + initial_learning_rate
     else:
         learning_rate = iteration ** -0.5 * max_learning_rate / warmup_steps ** -0.5
-    
+
     return learning_rate
 
 
 def generate_benchmark_sentences(model, hparams, output_dir):
     ''' Generate benchmark sentences using Daft-Exprt model
-    
+
     :param model:           model to use for synthesis
     :param hparams:         hyper-params used for training/synthesis
     :param output_dir:      directory to store synthesized files
@@ -171,7 +171,7 @@ def generate_benchmark_sentences(model, hparams, output_dir):
     _logger.info('\nGenerating benchmark sentences with the following parameters:')
     _logger.info(f'speaker_id = {speaker_id}')
     _logger.info(f'audio_ref = {audio_ref}\n')
-    
+
     # prepare benchmark sentences
     n_jobs = get_nb_jobs('max')
     text_file = os.path.join(hparams.benchmark_dir, hparams.language, 'sentences.txt')
@@ -208,16 +208,26 @@ def validate(gpu, model, criterion, val_loader, hparams):
         'mel_spec_l1_loss': 0., 'mel_spec_l2_loss': 0.
     }
     val_targets, val_outputs = [], []
-    
+
     # set eval mode
     model.eval()
     with torch.no_grad():
         # iterate over validation set
         for i, batch in enumerate(val_loader):
-            if hparams.multiprocessing_distributed:
-                inputs, targets, _ = model.module.parse_batch(gpu, batch)
+            if hparams.using_pabc:
+                if hparams.multiprocessing_distributed:
+                    gt_inputs, gt_targets, _ = model.module.parse_batch(gpu, batch[0])
+                    ref_inputs, ref_targets, _ = model.module.parse_batch(gpu, batch[1])
+                else:
+                    gt_inputs, gt_targets, _ = model.parse_batch(gpu, batch[0])
+                    ref_inputs, ref_targets, _ = model.parse_batch(gpu, batch[1])
+                inputs = (gt_inputs, ref_inputs)
+                targets = (gt_targets, ref_targets)
             else:
-                inputs, targets, _ = model.parse_batch(gpu, batch)
+                if hparams.multiprocessing_distributed:
+                    inputs, targets, _ = model.module.parse_batch(gpu, batch)
+                else:
+                    inputs, targets, _ = model.parse_batch(gpu, batch)
             outputs = model(inputs)
             loss, individual_loss = criterion(outputs, targets, iteration=0)
             val_targets.append(targets)
@@ -235,7 +245,7 @@ def validate(gpu, model, criterion, val_loader, hparams):
 
 def train(gpu, hparams, log_file):
     ''' Train Daft-Exprt model
-    
+
     :param gpu:         GPU ID to host the model
     :param hparams:     hyper-params used for training
     :param log_file:    file path for logging
@@ -249,7 +259,7 @@ def train(gpu, hparams, log_file):
         hparams.rank = hparams.rank * hparams.ngpus_per_node + gpu
         dist.init_process_group(backend=hparams.dist_backend, init_method=hparams.dist_url,
                                 world_size=hparams.world_size, rank=hparams.rank)
-    
+
     # ---------------------------------------------------------
     # create loggers
     # ---------------------------------------------------------
@@ -278,20 +288,20 @@ def train(gpu, hparams, log_file):
             datefmt="%Y-%m-%d %H:%M:%S",
             level=logging.ERROR
         )
-    
+
     # ---------------------------------------------------------
     # create model
     # ---------------------------------------------------------
     # load model on GPU
     torch.cuda.set_device(gpu)
     model = DaftExprt(hparams).cuda(gpu)
-    
+
     # for multiprocessing distributed, DistributedDataParallel constructor
     # should always set the single device scope, otherwise,
     # DistributedDataParallel will use all available devices
     if hparams.multiprocessing_distributed:
         model = DDP(model, device_ids=[gpu])
-    
+
     # ---------------------------------------------------------
     # define training loss and optimizer
     # ---------------------------------------------------------
@@ -299,7 +309,7 @@ def train(gpu, hparams, log_file):
     optimizer = Adam(filter(lambda p: p.requires_grad, model.parameters()),
                      betas=hparams.betas, eps=hparams.epsilon,
                      weight_decay=hparams.weight_decay, amsgrad=False)
-    
+
     # ---------------------------------------------------------
     # optionally resume from a checkpoint
     # ---------------------------------------------------------
@@ -308,7 +318,7 @@ def train(gpu, hparams, log_file):
         model, optimizer, iteration, learning_rate, best_val_loss = \
             load_checkpoint(hparams.checkpoint, gpu, model, optimizer, hparams)
         iteration += 1  # next iteration is iteration + 1
-    
+
     # ---------------------------------------------------------
     # set learning rate
     # ---------------------------------------------------------
@@ -316,13 +326,13 @@ def train(gpu, hparams, log_file):
     for param_group in optimizer.param_groups:
         if param_group['lr'] is not None:
             param_group['lr'] = learning_rate
-    
+
     # ---------------------------------------------------------
     # prepare Data Loaders
     # ---------------------------------------------------------
     train_loader, train_sampler, val_loader, nb_training_examples = \
         prepare_data_loaders(hparams, num_workers=8)
-    
+
     # ---------------------------------------------------------
     # display training info
     # ---------------------------------------------------------
@@ -352,32 +362,44 @@ def train(gpu, hparams, log_file):
     total_time = 0.
     start = time.time()
     accumulation_step = 0
-    
+
     model.train()  # set training mode
     model.zero_grad()  # set gradients to 0
     for epoch in range(epoch_offset, epochs):
         _logger.info(30 * '=')
         _logger.info(f"| Epoch: {epoch}")
         _logger.info(30 * '=' + '\n')
-        
+
         # shuffle dataset
         if hparams.multiprocessing_distributed:
             train_sampler.set_epoch(epoch)
-        
+
         # iterate over examples
         for batch in train_loader:
             # ---------------------------------------------------------
             # forward pass
             # ---------------------------------------------------------
-            if hparams.multiprocessing_distributed:
-                inputs, targets, _ = model.module.parse_batch(gpu, batch)
+            if hparams.using_pabc:
+                if hparams.multiprocessing_distributed:
+                    gt_inputs, gt_targets, _ = model.module.parse_batch(gpu, batch[0])
+                    ref_inputs, ref_targets, _ = model.module.parse_batch(gpu, batch[1])
+                else:
+                    gt_inputs, gt_targets, _ = model.parse_batch(gpu, batch[0])
+                    ref_inputs, ref_targets, _ = model.parse_batch(gpu, batch[1])
+                inputs = (gt_inputs, ref_inputs)
+                targets = (gt_targets, ref_targets)
             else:
-                inputs, targets, _ = model.parse_batch(gpu, batch)
-            
+                if hparams.multiprocessing_distributed:
+                    inputs, targets, _ = model.module.parse_batch(gpu, batch)
+                else:
+                    inputs, targets, _ = model.parse_batch(gpu, batch)
+
+            # outputs of model does not change in dimensions based on the type
+            # of training being performed
             outputs = model(inputs)
             loss, individual_loss = criterion(outputs, targets, iteration)  # loss / batch_size
             loss = loss / hparams.accumulation_steps  # loss / (batch_size * accumulation_steps)
-            
+
             # track losses
             tot_loss += loss.item()
             for key in individual_loss:
@@ -437,6 +459,9 @@ def train(gpu, hparams, log_file):
                                             (total_time / hparams.iters_check_for_model_improvement)))))
                         total_time = 0
                         # log validation loss
+                        if hparams.using_pabc:
+                            # get only the ground truth targets
+                            val_targets = [vt[0] for vt in val_targets]
                         tensorboard_logger.log_validation(val_loss, val_indiv_loss, val_targets,
                                                           val_outputs, model, hparams, iteration)
 
@@ -468,7 +493,7 @@ def train(gpu, hparams, log_file):
                     # barrier for distributed processes
                     if hparams.multiprocessing_distributed:
                         dist.barrier()
-                
+
                 # ---------------------------------------------------------
                 # reset variables
                 # ---------------------------------------------------------
@@ -481,10 +506,10 @@ def train(gpu, hparams, log_file):
                 }
                 start = time.time()
                 accumulation_step = 0
-                
+
                 model.train()  # set training mode
                 model.zero_grad()  # set gradients to 0
-                
+
                 # ---------------------------------------------------------
                 # adjust learning rate
                 # ---------------------------------------------------------
@@ -499,10 +524,10 @@ def launch_training(data_set_dir, config_file, benchmark_dir, log_file, world_si
     ''' Launch training in distributed mode or on a single GPU
         PyTorch distributed training is performed using DistributedDataParrallel API
         Inspired from https://github.com/pytorch/examples/blob/master/imagenet/main.py
-    
+
         - multiprocessing_distributed=False:
             Training is performed using only GPU 0 on the machine
-        
+
         - multiprocessing_distributed=True:
             Multi-processing distributed training is performed with DistributedDataParrallel API.
             X distributed processes are launched on the machine, with X the total number of GPUs
@@ -536,16 +561,16 @@ def launch_training(data_set_dir, config_file, benchmark_dir, log_file, world_si
             datefmt="%Y-%m-%d %H:%M:%S",
             level=logging.ERROR
         )
-    
+
     # get hyper-parameters
     with open(config_file) as f:
         data = f.read()
     config = json.loads(data)
     hparams = HyperParams(verbose=False, **config)
-    
+
     # count number of GPUs on the machine
     ngpus_per_node = torch.cuda.device_count()
-    
+
     # set default values
     if multiprocessing_distributed:
         hparams.dist_url = f'{master}'
@@ -555,28 +580,28 @@ def launch_training(data_set_dir, config_file, benchmark_dir, log_file, world_si
         world_size = ngpus_per_node * world_size
     else:
         rank, gpu = 0, 0
-    
+
     # update hparams
     hparams.data_set_dir = data_set_dir
     hparams.config_file = config_file
     hparams.benchmark_dir = benchmark_dir
-    
+
     hparams.rank = rank
     hparams.world_size = world_size
     hparams.ngpus_per_node = ngpus_per_node
     hparams.multiprocessing_distributed = multiprocessing_distributed
-    
+
     # check that config used for training is the same than the one used for features extraction
     check_train_config(hparams)
     # save hyper-params to config.json
     if rank == 0:
         hparams.save_hyper_params(hparams.config_file)
-    
+
     # check if multiprocessing distributed is deactivated but feasible
     if not multiprocessing_distributed and ngpus_per_node > 1:
         _logger.warning(f'{ngpus_per_node} GPUs detected but distributed training is not set. '
                         f'Training on only 1 GPU.\n')
-    
+
     # define cudnn variables
     torch.manual_seed(0)
     torch.backends.cudnn.enabled = hparams.cudnn_enabled
@@ -589,7 +614,7 @@ def launch_training(data_set_dir, config_file, benchmark_dir, log_file, world_si
         _logger.warning('You have chosen to seed training. This will turn on the CUDNN deterministic setting, '
                         'which can slow down your training considerably! You may see unexpected behavior when '
                         'restarting from checkpoints.\n')
-    
+
     # display training setup info
     _logger.info(f'PyTorch version -- {torch.__version__}')
     _logger.info(f'CUDA version -- {torch.version.cuda}')
@@ -597,10 +622,10 @@ def launch_training(data_set_dir, config_file, benchmark_dir, log_file, world_si
     _logger.info(f'CUDNN enabled = {torch.backends.cudnn.enabled}')
     _logger.info(f'CUDNN deterministic = {torch.backends.cudnn.deterministic}')
     _logger.info(f'CUDNN benchmark = {torch.backends.cudnn.benchmark}\n')
-    
+
     # clear handlers
     _logger.handlers.clear()
-    
+
     # launch multi-processing distributed training
     if multiprocessing_distributed:
         # use torch.multiprocessing.spawn to launch distributed processes
@@ -632,7 +657,7 @@ if __name__ == '__main__':
                         help='path to save logger outputs')
 
     args = parser.parse_args()
-    
+
     # launch training
     launch_training(args.data_set_dir, args.config_file, args.benchmark_dir, args.log_file,
                     args.world_size, args.rank, args.multiprocessing_distributed, args.master)

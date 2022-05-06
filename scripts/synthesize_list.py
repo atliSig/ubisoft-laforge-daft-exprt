@@ -4,17 +4,16 @@ import os
 import random
 import sys
 import time
-
 import torch
 
-from shutil import copyfile
+from shutil import copyfile, rmtree
 
 FILE_ROOT = os.path.dirname(os.path.realpath(__file__))
 PROJECT_ROOT = os.path.dirname(FILE_ROOT)
 os.environ['PYTHONPATH'] = os.path.join(PROJECT_ROOT, 'src')
 sys.path.append(os.path.join(PROJECT_ROOT, 'src'))
 
-from daft_exprt.generate import extract_reference_parameters, generate_mel_specs, prepare_sentences_for_inference
+from daft_exprt.generate import extract_reference_parameters, generate_mel_specs, phonemize_list
 from daft_exprt.hparams import HyperParams
 from daft_exprt.model import DaftExprt
 from daft_exprt.utils import get_nb_jobs
@@ -45,26 +44,38 @@ def synthesize(args, dur_factor=None, energy_factor=None, pitch_factor=None,
 
     # prepare sentences
     n_jobs = get_nb_jobs('max')
-    sentences, file_names = prepare_sentences_for_inference(args.text_file, args.output_dir, hparams, n_jobs)
-    # extract reference parameters
-    if args.style_bank_paths != '':
-        with open(args.style_bank_paths, 'r') as f:
-            for line in f:
-                ref_path = line.strip()
-                copyfile(ref_path, os.path.join(args.style_bank, os.path.split(ref_path)[1]))
 
-    audio_refs = [os.path.join(args.style_bank, x) for x in os.listdir(args.style_bank) if x.endswith('.wav')]
+    # create output directory or delete everything if it already exists
+    if os.path.exists(args.output_dir):
+        rmtree(args.output_dir)
+    os.makedirs(args.output_dir, exist_ok=False)
+    os.makedirs(os.path.join(args.output_dir, 'refs'), exist_ok=False)
+    sentences, speaker_ids, ref_paths = [], [], []
+    with open(args.list_path, 'r') as f:
+        for line in f:
+            text, spkr_id, ref_path = line.strip().split('|')
+            sentences.append(text)
+            speaker_ids.append(int(spkr_id))
+            ref_paths.append(ref_path)
+    sentences = phonemize_list(sentences, hparams, n_jobs)
+
+    # store the references in the output directory
+    audio_refs = []
+    for ref_path in ref_paths:
+        new_path = os.path.join(args.output_dir, 'refs', os.path.split(ref_path)[1])
+        copyfile(ref_path, new_path)
+        audio_refs.append(new_path)
+
+    file_names = []
+    for i in range(len(sentences)):
+        fname = f'text_{i}_'
+        file_names.append(fname)
     for audio_ref in audio_refs:
-        extract_reference_parameters(audio_ref, args.style_bank, hparams)
+        extract_reference_parameters(audio_ref, os.path.join(args.output_dir, 'refs'), hparams)
 
-    # choose a random reference per sentence
-    refs = [os.path.join(args.style_bank, x) for x in os.listdir(args.style_bank) if x.endswith('.npz')]
-    refs = [random.choice(refs) for _ in range(len(sentences))]
-    # choose a random speaker ID per sentence
-    if args.speaker_id >= 0:
-        speaker_ids = [args.speaker_id for _ in range(len(sentences))]
-    else:
-        speaker_ids = [random.choice(hparams.speakers_id) for _ in range(len(sentences))]
+    refs = []
+    for i in range(len(sentences)):
+        refs.append(f'{os.path.splitext(audio_refs[i])[0]}.npz')
 
     # add duration factors for each symbol in the sentence
     dur_factors = [] if dur_factor is not None else None
@@ -91,7 +102,7 @@ def synthesize(args, dur_factor=None, energy_factor=None, pitch_factor=None,
                        hparams, dur_factors, energy_factors, pitch_factors, args.batch_size,
                        n_jobs, use_griffin_lim, get_time_perf)
 
-    return file_names, refs, speaker_ids
+    #return file_names, refs, speaker_ids
 
 
 def pair_ref_and_generated(args, file_names, refs, speaker_ids):
@@ -118,21 +129,14 @@ if __name__ == '__main__':
                         help='output dir to store synthesis outputs')
     parser.add_argument('-chk', '--checkpoint', type=str,
                         help='checkpoint path to use for synthesis')
-    parser.add_argument('-tf', '--text_file', type=str, default=os.path.join(PROJECT_ROOT, 'scripts', 'benchmarks', 'english', 'sentences.txt'),
-                        help='text file to use for synthesis')
-    parser.add_argument('-sb', '--style_bank', type=str, default=os.path.join(PROJECT_ROOT, 'scripts', 'style_bank', 'english'),
-                        help='directory path containing the reference utterances to use for synthesis')
-    parser.add_argument('-sf', '--style_bank_paths', type=str, default='',
-                        help='A path to a file-path list file to reference .wavs')
+    parser.add_argument('-lp', '--list_path', type=str,
+                        help='path to the list to synthesise')
     parser.add_argument('-bs', '--batch_size', type=int, default=50,
                         help='batch of sentences to process in parallel')
     parser.add_argument('-rtf', '--real_time_factor', action='store_true',
                         help='get Daft-Exprt real time factor performance given the batch size')
     parser.add_argument('-ctrl', '--control', action='store_true',
                         help='perform local prosody control during synthesis')
-    parser.add_argument('--speaker_id', type=int, default=-1,
-                        help='select a target speaker for all samples')
-
     args = parser.parse_args()
 
     # set logger config
@@ -159,5 +163,5 @@ if __name__ == '__main__':
         synthesize(args, dur_factor=dur_factor, pitch_factor=pitch_factor,
                    pitch_transform=pitch_transform, use_griffin_lim=True)
     else:
-        file_names, refs, speaker_ids = synthesize(args, use_griffin_lim=True)
-        pair_ref_and_generated(args, file_names, refs, speaker_ids)
+        synthesize(args, use_griffin_lim=True)
+        #pair_ref_and_generated(args, file_names, refs, speaker_ids)

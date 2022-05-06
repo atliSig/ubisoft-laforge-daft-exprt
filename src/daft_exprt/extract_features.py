@@ -224,7 +224,7 @@ def update_markers(file_name, lines, sentence, sent_begin, int_durations, hparam
         return None
 
 
-def extract_pitch(wav, fs, nb_melspec_frames, hparams):
+def extract_pitch(wav, fs, nb_melspec_frames, hparams, log=True):
     ''' Extract pitch frames from audio using REAPER binary
         Convert pitch to log scale and set unvoiced values to 0.
     '''
@@ -252,13 +252,16 @@ def extract_pitch(wav, fs, nb_melspec_frames, hparams):
 
     uv_idxs = np.where(pitch <= 0.)[0]
     # put to log scale
-    pitch[uv_idxs] = 1000.
-    pitch = np.log(pitch)
+    if log:
+        # put to log scale
+        pitch[uv_idxs] = 1000.
+        pitch = np.log(pitch)
     # set unvoiced values to 0.
     pitch[uv_idxs] = 0.
     # extract pitch for each mel-spec frame
     pitch_frames = pitch[::hparams.hop_length]
-
+    if nb_melspec_frames is None:
+        return pitch_frames
     if len(pitch_frames) != nb_melspec_frames:
         # pad each end to match
         if len(pitch_frames) < nb_melspec_frames: # 243 - 245 - > 246 - 245
@@ -519,6 +522,31 @@ def get_files_for_features_extraction(line, markers_dir, log_queue):
         return file_name
     else:
         return None
+
+def extract_mel_specs(file_list_path, out_dir, hparams, n_jobs):
+    _logger.info('--' * 30)
+    _logger.info('Extracting Mel Specs'.upper())
+    _logger.info('--' * 30)
+    if out_dir is not None:
+        assert(os.path.isdir(out_dir)), _logger.error(f'There is no such directory: {out_dir}')
+
+    with open(file_list_path, 'r') as f:
+        for line in f:
+            file_path = line.strip()
+            assert os.path.isfile(file_path), f"File not found {file_path}"
+            file_head, fname = os.path.split(file_path)
+            if out_dir is None:
+                file_out_dir = file_head
+            else:
+                file_out_dir = out_dir
+
+            wav, fs = librosa.load(file_path, sr=hparams.sampling_rate)
+            wav = rescale_wav_to_float32(wav)
+            # extract mel-spectrogram
+            mel_spec = mel_spectrogram_HiFi(wav, hparams)
+
+            print(file_out_dir, f'{os.path.splitext(fname)[0]}.npy')
+            np.save(os.path.join(file_out_dir, f'{os.path.splitext(fname)[0]}.npy'), mel_spec)
 
 
 def extract_features(dataset_dir, features_dir, hparams, n_jobs):

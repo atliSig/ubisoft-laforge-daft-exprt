@@ -13,12 +13,17 @@ os.environ['PYTHONPATH'] = os.path.join(PROJECT_ROOT, 'src')
 sys.path.append(os.path.join(PROJECT_ROOT, 'src'))
 
 from daft_exprt.create_sets import create_sets
-from daft_exprt.extract_features import check_features_config_used, extract_features
+from daft_exprt.extract_features import check_features_config_used, extract_features, extract_mel_specs
 from daft_exprt.features_stats import extract_features_stats
 from daft_exprt.hparams import HyperParams
 from daft_exprt.mfa import mfa
 from daft_exprt.utils import get_nb_jobs
+from daft_exprt.extract_features import extract_pitch
 
+import librosa
+import json
+import numpy as np
+import matplotlib.pyplot as plt
 
 _logger = logging.getLogger(__name__)
 
@@ -39,6 +44,63 @@ def list_all_speakers(data_set_dir):
 
     return speakers
 
+
+def extract_mels(extract_mel_args):
+    if extract_mel_args.out_dir == '':
+        out_dir = None
+    else:
+        out_dir = extract_mel_args.out_dir
+        os.makedirs(extract_mel_args.out_dir, exist_ok=True)
+    nb_jobs = get_nb_jobs(extract_mel_args.nb_jobs)
+    extract_mel_specs(
+        extract_mel_args.file_list, out_dir, hparams, nb_jobs)
+
+
+def extract_feats(extract_pitch_args):
+    # /home/co-sigu1/projects/ubisoft-laforge-daft-exprt/mini_v3_qualtreats/ground_truth
+    stats = json.load(open('/home/co-sigu1/projects/ubisoft-laforge-daft-exprt/trainings/cleaned_pabc/stats.json'))
+    lines = []
+    diffs = []
+    with open(extract_pitch_args.list_path, 'r') as f:
+        for line in f:
+            lines.append(line.strip().split('|'))
+    out_lines = []
+    # ref speaker ind = 1, target speaker ind = 3
+    for i in range(len(list(os.listdir(extract_pitch_args.dir)))):
+        path = os.path.join(extract_pitch_args.dir, f'sample_{i}.wav')
+        wav, fs = librosa.load(path, sr=hparams.sampling_rate)
+        pitch_frames = extract_pitch(wav, fs, None, hparams, log=False)
+        plt.plot(pitch_frames[pitch_frames!=0])
+
+        sample_f0 = np.mean(pitch_frames[pitch_frames!=0])
+        ref_f0 = np.exp(stats[f"spk {lines[i][1]}"]["pitch"]['mean'])
+        tar_f0 = np.exp(stats[f"spk {lines[i][3]}"]["pitch"]['mean'])
+        diffs.append(np.abs(sample_f0-tar_f0))
+        out_lines.append(f'{sample_f0}, {ref_f0}, {tar_f0}')
+
+    for line in out_lines:
+        print(line)
+    print(np.mean(diffs))
+
+
+def plot_f0s(extract_pitch_args):
+    exp_names = ['Daft-exprt', 'shuffle', 'text-based', 'F0-based']
+    for i in range(60):
+        fig, axs = plt.subplots(4, 1)
+        ind = 0
+        path = os.path.join(extract_pitch_args.main_dir, 'ground_truth', f'sample_{i}.wav')
+        wav, fs = librosa.load(path, sr=hparams.sampling_rate)
+        gt_pitch_frames = extract_pitch(wav, fs, None, hparams, log=False)
+        for dir_name in ['pabc_cleaned_mini', 'pabc_cleaned_mini_v2', 'pabc_cleaned_mini_v4', 'pabc_cleaned_mini_v5']:
+            path = os.path.join(extract_pitch_args.main_dir, dir_name, f'sample_{i}.wav')
+            wav, fs = librosa.load(path, sr=hparams.sampling_rate)
+            pitch_frames = extract_pitch(wav, fs, None, hparams, log=False)
+            axs[ind].plot(gt_pitch_frames, label=exp_names[ind], color='blue')
+            axs[ind].plot(pitch_frames, label=exp_names[ind], color='red')
+            axs[ind].set_ylabel(f"F0 (Hz)\n{exp_names[ind]}")
+            ind += 1
+        fig.tight_layout()
+        plt.savefig(f'./plots_2/s_{i}.png')
 
 def pre_process(pre_process_args):
     ''' Pre-process speakers data sets for training
@@ -122,7 +184,8 @@ def fine_tune(fine_tune_args):
                '--data_set_dir', f'{data_set_dir}',
                '--config_file', f'{config_file}',
                '--log_file', f"{os.path.join(output_directory, 'logs', 'fine_tuning.log')}",
-               '--ft_dir', f'{fine_tune_args.ft_directory}']
+               '--ft_dir', f'{fine_tune_args.ft_directory}',
+               '--custom_path', f'{fine_tune_args.custom_path}']
     call(process)
 
 
@@ -149,6 +212,22 @@ if __name__ == '__main__':
     parser_pre_process.add_argument('-nj', '--nb_jobs', type=str, default='6',
                                     help='number of cores to use for python multi-processing')
 
+    parser_extract_mels = subparsers.add_parser('extract_mels', help='Extract mels ')
+    parser_extract_mels.set_defaults(func=extract_mels)
+    parser_extract_mels.add_argument('--file_list', type=str)
+    parser_extract_mels.add_argument('--out_dir', type=str, default='')
+    parser_extract_mels.add_argument('-nj', '--nb_jobs', type=str, default='6',
+                                    help='number of cores to use for python multi-processing')
+
+    parser_extract_pitch = subparsers.add_parser('extract_feats', help='Extract mels ')
+    parser_extract_pitch.set_defaults(func=extract_feats)
+    parser_extract_pitch.add_argument('--dir', type=str)
+    parser_extract_pitch.add_argument('--list_path', type=str)
+
+    parser_extract_pitch = subparsers.add_parser('plot_pitch', help='Extract mels ')
+    parser_extract_pitch.set_defaults(func=plot_f0s)
+    parser_extract_pitch.add_argument('--main_dir', type=str)
+
     parser_train = subparsers.add_parser('train', help='train Daft-Exprt on the pre-processed data sets')
     parser_train.set_defaults(func=train)
     parser_train.add_argument('-chk', '--checkpoint', type=str, default='',
@@ -162,6 +241,8 @@ if __name__ == '__main__':
                               help='node rank for distributed training')
     parser_train.add_argument('-m', '--master', type=str, default='tcp://localhost:54321',
                               help='url used to set up distributed training')
+    parser_train.add_argument('--using_pabc', type=bool, default=False,
+                              help='Set this to True if reference does not match target')
 
     parser_fine_tune = subparsers.add_parser('fine_tune', help='generate data sets with the Daft-Exprt trained model for vocoder fine-tuning')
     parser_fine_tune.set_defaults(func=fine_tune)
@@ -169,6 +250,10 @@ if __name__ == '__main__':
                                   help='checkpoint path to use for creating the data set for fine-tuning')
     parser_fine_tune.add_argument('-ftdir', '--ft_directory', type=str, default='',
                                   help='Path to directory where the fine tuning dataset will be stored.')
+    parser_fine_tune.add_argument('-cp', '--custom_path', type=str, default=None,
+                                  help='Use this to generate custom fine tuning samples')
+    parser_fine_tune.add_argument('--using_pabc', type=bool, default=False,
+                              help='Set this to True if reference does not match target')
     args = parser.parse_args()
 
     # create path variables
@@ -183,13 +268,18 @@ if __name__ == '__main__':
     # find all speakers in data_set_dir if not specified in the args
     args.speakers = list_all_speakers(data_set_dir) if len(args.speakers) == 0 else args.speakers
 
+    if 'using_pabc' in args:
+        using_pabc = args.using_pabc
+    else:
+        using_pabc = False
     # fill hparams dictionary with mandatory keyword arguments
     hparams_kwargs = {
         'training_files': training_files,
         'validation_files': validation_files,
         'output_directory': output_directory,
         'language': args.language,
-        'speakers': args.speakers
+        'speakers': args.speakers,
+        'using_pabc': using_pabc
     }
     # fill hparams dictionary to overwrite default hyper-param values
     hparams_kwargs['checkpoint'] = args.checkpoint if hasattr(args, 'checkpoint') else ''

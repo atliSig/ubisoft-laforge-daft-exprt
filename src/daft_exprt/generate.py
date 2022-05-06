@@ -492,3 +492,13 @@ def prepare_sentences_for_inference(text_file, output_dir, hparams, n_jobs):
             f.write(f'{file_name}|{text}\n')
 
     return sentences, file_names
+
+
+def phonemize_list(sentences, hparams, n_jobs):
+    ''' Phonemize and format sentences to synthesize
+    '''
+    # phonemize
+    hparams.update_mfa_paths()
+    sentences = launch_multi_process(iterable=sentences, func=phonemize_sentence,
+                                     n_jobs=n_jobs, timer_verbose=False, hparams=hparams)
+    return sentences

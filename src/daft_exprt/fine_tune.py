@@ -10,7 +10,7 @@ import torch
 
 from scipy.io.wavfile import write
 
-from daft_exprt.data_loader import prepare_data_loaders
+from daft_exprt.data_loader import prepare_data_loaders, prepare_custom_data_loader
 from daft_exprt.extract_features import mel_spectrogram_HiFi, rescale_wav_to_float32
 from daft_exprt.hparams import HyperParams
 from daft_exprt.model import DaftExprt
@@ -20,7 +20,7 @@ from daft_exprt.utils import estimate_required_time
 _logger = logging.getLogger(__name__)
 
 
-def fine_tuning(hparams, ft_dir):
+def fine_tuning(hparams, ft_dir, custom_path=None):
     ''' Extract mel-specs and audio files for Vocoder fine-tuning
 
     :param hparams:     hyper-params used for pre-processing and training
@@ -44,8 +44,12 @@ def fine_tuning(hparams, ft_dir):
     # prepare Data Loaders
     # ---------------------------------------------------------
     hparams.multiprocessing_distributed = False
-    train_loader, _, _, _ = \
-        prepare_data_loaders(hparams, num_workers=0, drop_last=False)
+    if custom_path is not None:
+        data_loader = prepare_custom_data_loader(
+            hparams, custom_path, num_workers=0, drop_last=False)
+    else:
+        data_loader, _, _, _ = \
+            prepare_data_loaders(hparams, num_workers=0, drop_last=False)
 
     # ---------------------------------------------------------
     # create folders to store fine-tuning data set
@@ -56,8 +60,11 @@ def fine_tuning(hparams, ft_dir):
     else:
         ft_data_set = os.path.join(experiment_root, 'fine_tuning_dataset')
     hparams.ft_data_set = ft_data_set
-    for speaker in hparams.speakers:
-        os.makedirs(os.path.join(ft_data_set, speaker), exist_ok=True)
+    if hparams.using_pabc:
+        os.makedirs(ft_data_set, exist_ok=True)
+    else:
+        for speaker in hparams.speakers:
+            os.makedirs(os.path.join(ft_data_set, speaker), exist_ok=True)
 
     # ==============================================
     #                   MAIN LOOP
@@ -66,17 +73,33 @@ def fine_tuning(hparams, ft_dir):
     start = time.time()
     with torch.no_grad():
         # iterate over examples of train set
-        for idx, batch in enumerate(train_loader):
-            estimate_required_time(nb_items_in_list=len(train_loader), current_index=idx,
+        for idx, batch in enumerate(data_loader):
+            estimate_required_time(nb_items_in_list=len(data_loader), current_index=idx,
                                    time_elapsed=time.time() - start, interval=1)
-            inputs, _, file_ids = model.parse_batch(0, batch)
-            feature_dirs, feature_files = file_ids  # (B, ) and (B, )
+            if hparams.using_pabc:
+                (gt_inputs, _, gt_file_ids) = model.parse_batch(0, batch[0])
+                (ref_inputs, _, ref_file_ids) = model.parse_batch(0, batch[1])
+                inputs = (gt_inputs, ref_inputs)
+                outputs = model(inputs)
+                _, _, _, decoder_preds, _ = outputs
+                mel_spec_preds, output_lengths = decoder_preds
+                mel_spec_preds = mel_spec_preds.detach().cpu().numpy()  # (B, nb_mels, T_max)
+                output_lengths = output_lengths.detach().cpu().numpy()  # (B, )
+                # we will be using
+                ref_feature_dirs, ref_feature_files = ref_file_ids
+                feature_dirs, feature_files = gt_file_ids  # (B, ) and (B, )
 
-            outputs = model(inputs)
-            _, _, _, decoder_preds, _ = outputs
-            mel_spec_preds, output_lengths = decoder_preds
-            mel_spec_preds = mel_spec_preds.detach().cpu().numpy()  # (B, nb_mels, T_max)
-            output_lengths = output_lengths.detach().cpu().numpy()  # (B, )
+                gt_speaker_ids = gt_inputs[-1].detach().cpu().numpy()
+                ref_speaker_ids = ref_inputs[-1].detach().cpu().numpy()
+            else:
+                inputs, _, file_ids = model.parse_batch(0, batch)
+                feature_dirs, feature_files = file_ids  # (B, ) and (B, )
+
+                outputs = model(inputs)
+                _, _, _, decoder_preds, _ = outputs
+                mel_spec_preds, output_lengths = decoder_preds
+                mel_spec_preds = mel_spec_preds.detach().cpu().numpy()  # (B, nb_mels, T_max)
+                output_lengths = output_lengths.detach().cpu().numpy()  # (B, )
 
             # iterate over examples in the batch
             for idx in range(mel_spec_preds.shape[0]):
@@ -111,8 +134,18 @@ def fine_tuning(hparams, ft_dir):
                     wav = wav * 32768.0
                     wav = wav.astype('int16')
                     # store files in fine-tuning data set
-                    mel_spec_file = os.path.join(hparams.ft_data_set, speaker_name, f'{feature_file}.npy')
-                    wav_file = os.path.join(hparams.ft_data_set, speaker_name, f'{feature_file}.wav')
+                    if hparams.using_pabc:
+                        # save wav as is, save spectrogram as a combination
+                        #ref_feature_dir = ref_feature_dirs[idx]
+                        #ref_feature_file = ref_feature_files[idx]
+                        #ref_speaker_name = [speaker for speaker in hparams.speakers if ref_feature_dir.endswith(speaker)][0]
+                        #assert(len(ref_speaker_name) == 1), _logger.error(f'{ref_feature_dir} -- {ref_feature_file} -- {ref_speaker_name}')
+                        #ref_speaker_name = speaker_name[0]
+                        mel_spec_file = os.path.join(hparams.ft_data_set, f'{gt_speaker_ids[idx]}_{ref_speaker_ids[idx]}_{feature_file}.npy')
+                        wav_file = os.path.join(hparams.ft_data_set, f'gt_{gt_speaker_ids[idx]}_{feature_file}.wav')
+                    else:
+                        mel_spec_file = os.path.join(hparams.ft_data_set, speaker_name, f'{feature_file}.npy')
+                        wav_file = os.path.join(hparams.ft_data_set, speaker_name, f'{feature_file}.wav')
                     try:
                         np.save(mel_spec_file, mel_spec_pred)
                         write(wav_file, fs, wav)
@@ -126,7 +159,7 @@ def fine_tuning(hparams, ft_dir):
                     _logger.warning(f'{feature_dir} -- {feature_file} -- Ignoring because audio is < 1s')
 
 
-def launch_fine_tuning(data_set_dir, config_file, log_file, ft_dir):
+def launch_fine_tuning(data_set_dir, config_file, log_file, ft_dir, custom_path=None):
     ''' Launch fine-tuning
     '''
     # set logger config
@@ -168,7 +201,7 @@ def launch_fine_tuning(data_set_dir, config_file, log_file, ft_dir):
     _logger.info(f'CUDNN benchmark = {torch.backends.cudnn.benchmark}\n')
 
     # create fine-tuning data set
-    fine_tuning(hparams, ft_dir)
+    fine_tuning(hparams, ft_dir, custom_path)
 
 
 if __name__ == '__main__':
@@ -182,8 +215,12 @@ if __name__ == '__main__':
                         help='path to save logger outputs')
     parser.add_argument('--ft_dir', type=str, required=False,
                         help='Directory where ft dataset will be stored')
+    parser.add_argument('--custom_path', type=str, required=False, default="",
+                        help='Use this to generate a fine-tune dataset using custom utterances')
 
     args = parser.parse_args()
 
+    if args.custom_path == "None":
+        args.custom_path = None
     # launch fine-tuning
-    launch_fine_tuning(args.data_set_dir, args.config_file, args.log_file, args.ft_dir)
+    launch_fine_tuning(args.data_set_dir, args.config_file, args.log_file, args.ft_dir, args.custom_path)
