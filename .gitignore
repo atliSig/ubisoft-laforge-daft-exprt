@@ -17,3 +17,8 @@ slurm_*
 ### REAPER ####
 src/daft_exprt/bin/reaper/linux/reaper
 test_reaper.py
+
+#### result stuff ###
+v1_synths/
+v2_synths/
+v3_synths/
